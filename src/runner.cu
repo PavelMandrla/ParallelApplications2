@@ -25,10 +25,47 @@ __global__ void add1(const int* __restrict__ a, const int* __restrict__ b, const
     }
 }
 
-__global__ void fill(int* __restrict__ m, size_t pitch) {
+__global__ void fill(int* __restrict__ m, unsigned int rows, unsigned int cols, size_t pitch) {
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
+    if (x < rows && y < cols) {
+        int *rowStart = (int*)((char*) m + y * pitch);
+        rowStart[x] = x + y;
+    }
 }
 
+int main() {
+    initializeCUDA(deviceProp);
+
+    const int rows = 150;
+    const int cols = 200;
+
+    //init host memory
+    int *dM = nullptr;
+    size_t dPitch;
+    cudaMallocPitch((void**)&dM, &dPitch, rows * sizeof(int), cols);
+
+    dim3 dimBlock((rows / 8) + 1, (cols / 8) + 1);
+    dim3 dimGrid(8, 8, 1); // velke mnozstvi bloku -> nevyhoda
+    fill<<<dimBlock, dimGrid>>>(dM, rows, cols, dPitch);
+
+    checkDeviceMatrix<int>(dM, dPitch, rows, cols, "%d ", "Device M");  //helper metoda na výpis dat
+    cout << endl;
+
+    int *m = static_cast<int*>(::operator new (sizeof(int)*rows*cols));;
+    cudaMemcpy2D(m, sizeof(int) * cols, dM, dPitch, cols * sizeof(int), rows, cudaMemcpyDeviceToHost);
+    checkHostMatrix(m, sizeof(int) * cols, rows, cols, "%d ", "Host M");
+
+    //free memory
+    delete[] m;
+    cudaFree(dM); dM = nullptr;
+
+    return 0;
+}
+
+
+/*
 int main() {
     initializeCUDA(deviceProp);
 
@@ -82,7 +119,7 @@ int main() {
 
     return 0;
 }
-
+*/
 
 /*
 int main() {
