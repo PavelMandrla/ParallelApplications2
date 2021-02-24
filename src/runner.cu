@@ -6,7 +6,6 @@
 #include <iostream>
 #include <benchmark.h>
 
-
 cudaError error = cudaSuccess;
 cudaDeviceProp deviceProp = cudaDeviceProp();
 
@@ -17,14 +16,75 @@ constexpr unsigned int NOB = 16;    //number of blockss
 using namespace std;
 
 __global__ void add1(const int* __restrict__ a, const int* __restrict__ b, const unsigned int length, int* __restrict__ c) { //__restrict__ nijak to nebude datove zasahovat do vektoru b - > nebuou mit spolecnou pamet
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    c[i] = a[i] + b[i];
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int jump = gridDim.x * blockDim.x;
+
+    while (i < length) {
+        c[i] = a[i] + b[i];
+        i += jump;
+    }
 }
 
 __global__ void fill(int* __restrict__ m, size_t pitch) {
 
 }
 
+int main() {
+    initializeCUDA(deviceProp);
+
+    constexpr unsigned int length = 1000;
+    const unsigned int sizeInBytes = length * sizeof(int);
+
+    int *a = static_cast<int*>(::operator new (sizeInBytes)); //C++ paralela k mallocu
+    int *b = static_cast<int*>(::operator new (sizeInBytes));
+    int *c = static_cast<int*>(::operator new (sizeInBytes));
+
+    for (int i = 0; i < length; i++) {
+        a[i] = 1;//rand();
+        b[i] = 2;//rand();
+    }
+
+    //allocate device memory
+    int* da = nullptr;
+    int* db = nullptr;
+    int* dc = nullptr;
+    checkCudaErrors(cudaMalloc((void**)&da, sizeInBytes));
+    checkCudaErrors(cudaMalloc((void**)&db, sizeInBytes));
+    checkCudaErrors(cudaMalloc((void**)&dc, sizeInBytes));
+
+    //copy data from host to device
+    cudaMemcpy(da, a, sizeInBytes, cudaMemcpyKind::cudaMemcpyHostToDevice);
+    checkDeviceMatrix<int>(da, sizeInBytes, 1, length, "%d ", "Device A");
+
+    cudaMemcpy(db, b, sizeInBytes, cudaMemcpyKind::cudaMemcpyHostToDevice);
+    checkDeviceMatrix<int>(db, sizeInBytes, 1, length, "%d ", "Device B");  //helper metoda na výpis dat
+
+    //Prepare grid and blocks
+    dim3 dimBlock(TPB, 1, 1);
+
+    //dim3 dimGrid(NOB, 1, 1); // velke mnozstvi bloku -> nevyhoda
+    dim3 dimGrid(getNumberOfParts(length, TPB), 1, 1); // velke mnozstvi bloku -> nevyhoda
+    //dim3 dimGrid(getNumberOfParts(length, TPB * MBPTB), 1, 1);
+
+    add1<<<dimGrid, dimBlock>>>(da, db, length, dc);
+
+    cudaMemcpy(c, dc, sizeInBytes, cudaMemcpyDeviceToHost);
+    checkHostMatrix(c, sizeInBytes, 1, length, "%d ", "Host C");
+
+    //free memory
+    delete[] a;
+    delete[] b;
+    delete[] c;
+
+    cudaFree(da); da = nullptr;
+    cudaFree(db); db = nullptr;
+    cudaFree(dc); dc = nullptr;
+
+    return 0;
+}
+
+
+/*
 int main() {
     const int width = 10;
     const int height = 10;
@@ -112,4 +172,4 @@ int main() {
     cudaFree(da); da = nullptr;
     cudaFree(db); db = nullptr;
     cudaFree(dc); dc = nullptr;
-}
+}*/

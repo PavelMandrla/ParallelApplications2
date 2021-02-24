@@ -18,6 +18,7 @@ set_target_properties(PA2 PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
 target_compile_options(PA2 PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
         -gencode arch=compute_35,code=sm_35;
+        -Wno-deprecated-gpu-targets;
         >)
 
 
