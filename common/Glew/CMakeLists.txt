@@ -1,0 +1,5 @@
+find_package(GLEW REQUIRED)
+include_directories(${GLEW_INCLUDE_DIR})
+if(NOT GLEW_FOUND)
+    message(ERROR "GLEW not found!")
+endif(NOT GLEW_FOUND)

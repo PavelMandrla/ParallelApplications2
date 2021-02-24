@@ -1,0 +1,5 @@
+find_package(GLUT REQUIRED)
+include_directories(${GLUT_INCLUDE_DIR})
+if(NOT GLUT_FOUND)
+    message(ERROR "GLUT not found!")
+endif(NOT GLUT_FOUND)
