@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 14)
 
 add_subdirectory(../common/ [binary_dir])
 
-add_executable(PA2 runner.cu)
+add_executable(PA2 cv4.cu)
 
 target_link_libraries(PA2
         CUDA_11
