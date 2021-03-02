@@ -30,16 +30,16 @@ __global__ void fill(int* __restrict__ m, unsigned int rows, unsigned int cols, 
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (x < rows && y < cols) {
-        int *rowStart = (int*)((char*) m + y * pitch);
-        rowStart[x] = x + y;
+        int *rowStart = (int*)((char*) m + x * pitch);
+        rowStart[y] = x + y;
     }
 }
 
 int main() {
     initializeCUDA(deviceProp);
 
-    const int rows = 150;
-    const int cols = 200;
+    const int rows = 15;
+    const int cols = 20;
 
     //init host memory
     int *dM = nullptr;
