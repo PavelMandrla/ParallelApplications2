@@ -2,13 +2,14 @@
 #include <ctime>
 #include <cmath>
 #include <random>
+#include <algorithm>
 
 //WARNING!!! Do not change TPB and NO_FORCES for this demo !!!
 constexpr unsigned int TPB = 128;
-constexpr unsigned int NO_FORCES = 256;     //TODO -> BONUS - zvednout pocet sil, ktere budu redukovat, na jakekoliv N
-constexpr unsigned int NO_RAIN_DROPS = 10; //1 << 20;
+constexpr unsigned int NO_FORCES = 1234567;
+constexpr unsigned int NO_RAIN_DROPS = 1 << 20;
 
-constexpr unsigned int MEM_BLOCKS_PER_THREAD_BLOCK = 8;
+constexpr unsigned int MBPTB = 8; //MEM_BLOCKS_PER_THREAD_BLOCK
 
 cudaError_t error = cudaSuccess;
 cudaDeviceProp deviceProp = cudaDeviceProp();
@@ -37,6 +38,7 @@ void printData(const float3 *data, const unsigned int length) {
 	}
 }
 
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// <summary>	Sums the forces to get the final one using parallel reduction. 
 /// 		    WARNING!!! The method was written to meet input requirements of our example, i.e. 128 threads and 256 forces  </summary>
@@ -46,16 +48,24 @@ void printData(const float3 *data, const unsigned int length) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void reduce(const float3 * __restrict__ dForces, const unsigned int noForces, float3* __restrict__ dFinalForce) {
 	__shared__ float3 sForces[TPB];					//SEE THE WARNING MESSAGE !!!
+    const float3* start = &dForces[2 * blockDim.x * blockIdx.x];
 	unsigned int tid = threadIdx.x;
 	unsigned int next = TPB;						//SEE THE WARNING MESSAGE !!!
 
-	float3* src = &sForces[tid];
-	float3* src2 = (float3*)&dForces[tid + next];
+    float3* src = &sForces[tid];
+    float3* src2;
 
-	*src = dForces[tid];
-	src->x += src2->x;
-	src->y += src2->y;
-	src->z += src2->z;
+    if (2 * blockDim.x * blockIdx.x + threadIdx.x >= noForces) {    //src saha mimo dForces
+        *src = make_float3(0,0,0);
+	} else {
+        *src = start[tid];
+	    if (2 * blockDim.x * blockIdx.x + threadIdx.x + next < noForces)  { //src + next nesaha mimo dForces
+	        src2 = (float3*)&start[tid + next];
+            src->x += src2->x;
+            src->y += src2->y;
+            src->z += src2->z;
+	    }
+	}
 
     __syncthreads();
     next >>= 1;                 //64
@@ -77,8 +87,7 @@ __global__ void reduce(const float3 * __restrict__ dForces, const unsigned int n
     }
 
     if (tid == 0)
-        *dFinalForce = sForces[0];
-
+        dFinalForce[blockIdx.x] = sForces[0];
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -123,35 +132,42 @@ int main(int argc, char *argv[]) {
 	error = cudaMalloc((void**)&dDrops, NO_RAIN_DROPS * sizeof(float3));
 	error = cudaMemcpy(dDrops, hDrops, NO_RAIN_DROPS * sizeof(float3), cudaMemcpyHostToDevice);
 
-	error = cudaMalloc((void**)&dFinalForce, sizeof(float3));
+	//for (unsigned int i = 0; i<1000; i++) {
 
-	KernelSetting ksReduce;
-	ksReduce.dimBlock = dim3(TPB, 1, 1);
-	//TODO: ... Set ksReduce
+        KernelSetting ksReduce;
+        ksReduce.dimBlock = dim3(TPB, 1, 1);
+        ksReduce.dimGrid = dim3(NO_FORCES / (2 * ksReduce.dimBlock.x) + (NO_FORCES % ksReduce.dimBlock.x ? 1 : 0), 1, 1);
 
-	KernelSetting ksAdd;
-	ksAdd.dimBlock = dim3(32, 1, 1);
-	ksAdd.dimGrid = dim3(8, 1, 1);
-	//TODO: ... Set ksAdd
+        error = cudaMalloc((void**)&dFinalForce, ksReduce.dimGrid.x * sizeof(float3));
 
-	//check sum
-	float3 checkSum = make_float3(0,0,0);
-	for (int i = 0; i < NO_FORCES; i++) {
-	    checkSum.x += hForces[i].x;
-	    checkSum.y += hForces[i].y;
-	    checkSum.z += hForces[i].z;
-	}
+        unsigned int dataCount = NO_FORCES;
+        float3* dTmpData = dForces;
+        float3* dTmpRes = dFinalForce;
 
-    checkHostMatrix<float>((float*)hDrops, sizeof(float3), NO_RAIN_DROPS, 3, "%5.2f ", "Original Rain Drops");
+        while (ksReduce.dimGrid.x > 1) {    //Ukládá výsledky redukce do pomocné paměti pro každý blok a redukuje, dokud nezbyde pouze jediný výsledek.
+            reduce<<<ksReduce.dimGrid, ksReduce.dimBlock>>>(dTmpData, dataCount, dTmpRes);
 
-	//for (unsigned int i = 0; i<1000; i++)
-	//{
-		reduce<<<ksReduce.dimGrid, ksReduce.dimBlock>>>(dForces, NO_FORCES, dFinalForce);
-		add<<<ksAdd.dimGrid, ksAdd.dimBlock>>>(dFinalForce, NO_RAIN_DROPS, dDrops);
+            std::swap(dTmpData, dTmpRes);
+            dataCount = ksReduce.dimGrid.x;
+            ksReduce.dimGrid.x = dataCount / (2 * ksReduce.dimBlock.x) + (dataCount % ksReduce.dimBlock.x ? 1 : 0);
+        }
+        reduce<<<ksReduce.dimGrid, ksReduce.dimBlock>>>(dTmpData, dataCount, dTmpRes);
+        if (dFinalForce != dTmpRes)
+            cudaMemcpy(dFinalForce, dTmpRes, sizeof(float3), cudaMemcpyKind::cudaMemcpyDeviceToDevice);
+
+
+        KernelSetting ksAdd;
+        ksAdd.dimBlock = dim3(TPB, 1, 1);
+        ksAdd.dimGrid = dim3(getNumberOfParts(NO_RAIN_DROPS, TPB * MBPTB), 1, 1);
+
+        add<<<ksAdd.dimGrid, ksAdd.dimBlock>>>(dFinalForce, NO_RAIN_DROPS, dDrops);
 	//}
 
-    checkDeviceMatrix<float>((float*)dFinalForce, sizeof(float3), 1, 3, "%5.2f ", "Final force");
-	checkDeviceMatrix<float>((float*)dDrops, sizeof(float3), NO_RAIN_DROPS, 3, "%5.2f ", "Final Rain Drops");
+    cudaEventRecord(stopEvent, 0);
+    cudaEventSynchronize(stopEvent);
+
+    checkDeviceMatrix<float>((float*)dDrops, sizeof(float3), NO_RAIN_DROPS, 3, "%5.2f ", "Final Rain Drops");
+    checkDeviceMatrix<float>((float*)dFinalForce, sizeof(float3),1, 3, "%5.2f ", "Final force");
 
 	if (hForces)
 		free(hForces);
@@ -161,8 +177,7 @@ int main(int argc, char *argv[]) {
 	cudaFree(dForces);
 	cudaFree(dDrops);
 
-	cudaEventRecord(stopEvent, 0);
-	cudaEventSynchronize(stopEvent);
+
 
 	cudaEventElapsedTime(&elapsedTime, startEvent, stopEvent);
 	cudaEventDestroy(startEvent);
