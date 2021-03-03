@@ -6,7 +6,7 @@
 //WARNING!!! Do not change TPB and NO_FORCES for this demo !!!
 constexpr unsigned int TPB = 128;
 constexpr unsigned int NO_FORCES = 256;     //TODO -> BONUS - zvednout pocet sil, ktere budu redukovat, na jakekoliv N
-constexpr unsigned int NO_RAIN_DROPS = 1 << 20;
+constexpr unsigned int NO_RAIN_DROPS = 10; //1 << 20;
 
 constexpr unsigned int MEM_BLOCKS_PER_THREAD_BLOCK = 8;
 
@@ -24,13 +24,12 @@ float3 *createData(const unsigned int length) {
     float3* ptr = data;
     for (unsigned int i = 0; i < length; i++, ptr++) {
         *ptr = make_float3(dist(mt), dist(mt), dist(mt));
-        //*ptr = make_float3(1,1,1);
     }
 	return data;
 }
 
 void printData(const float3 *data, const unsigned int length) {
-	if (data == 0) return;
+	if (data == nullptr) return;
 	const float3 *ptr = data;
 	for (unsigned int i = 0; i<length; i++, ptr++)
 	{
@@ -89,7 +88,16 @@ __global__ void reduce(const float3 * __restrict__ dForces, const unsigned int n
 /// <param name="dRainDrops"> 	[in,out] If non-null, the rain drops positions. </param>
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void add(const float3* __restrict__ dFinalForce, const unsigned int noRainDrops, float3* __restrict__ dRainDrops) {
-	//TODO: Add the FinalForce to every Rain drops position.
+	unsigned int i = blockDim.x * blockIdx.x + threadIdx.x;
+	unsigned int jump = gridDim.x * blockDim.x;
+
+	while (i < noRainDrops) {
+        dRainDrops[i].x += dFinalForce->x;
+        dRainDrops[i].y += dFinalForce->y;
+        dRainDrops[i].z += dFinalForce->z;
+	    i += jump;
+	}
+
 }
 
 int main(int argc, char *argv[]) {
@@ -122,6 +130,8 @@ int main(int argc, char *argv[]) {
 	//TODO: ... Set ksReduce
 
 	KernelSetting ksAdd;
+	ksAdd.dimBlock = dim3(32, 1, 1);
+	ksAdd.dimGrid = dim3(8, 1, 1);
 	//TODO: ... Set ksAdd
 
 	//check sum
@@ -131,18 +141,17 @@ int main(int argc, char *argv[]) {
 	    checkSum.y += hForces[i].y;
 	    checkSum.z += hForces[i].z;
 	}
-	
+
+    checkHostMatrix<float>((float*)hDrops, sizeof(float3), NO_RAIN_DROPS, 3, "%5.2f ", "Original Rain Drops");
+
 	//for (unsigned int i = 0; i<1000; i++)
 	//{
 		reduce<<<ksReduce.dimGrid, ksReduce.dimBlock>>>(dForces, NO_FORCES, dFinalForce);
-		//add<<<ksAdd.dimGrid, ksAdd.dimBlock>>>(dFinalForce, NO_RAIN_DROPS, dDrops);
+		add<<<ksAdd.dimGrid, ksAdd.dimBlock>>>(dFinalForce, NO_RAIN_DROPS, dDrops);
 	//}
 
     checkDeviceMatrix<float>((float*)dFinalForce, sizeof(float3), 1, 3, "%5.2f ", "Final force");
-	checkHostMatrix<float>((float*)&checkSum, sizeof(float3), 1, 3, "%5.2f ", "Check force");
-
-
-	// checkDeviceMatrix<float>((float*)dDrops, sizeof(float3), NO_RAIN_DROPS, 3, "%5.2f ", "Final Rain Drops");
+	checkDeviceMatrix<float>((float*)dDrops, sizeof(float3), NO_RAIN_DROPS, 3, "%5.2f ", "Final Rain Drops");
 
 	if (hForces)
 		free(hForces);
