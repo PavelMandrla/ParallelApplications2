@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
-project(PA2_template LANGUAGES CUDA CXX)
+project(ParallelApplications2 LANGUAGES CUDA CXX)
 
 set(CMAKE_CXX_STANDARD 14)
 
 add_subdirectory(../common/ [binary_dir])
 
-add_executable(PA2 cv4.cu)
+add_executable(PA2 cv6.cu imageKernels.cuh)
 
 target_link_libraries(PA2
         CUDA_11
