@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 
+//#include <FreeImageLite.h>
 #include <FreeImage.h>
 
 class ImageManager

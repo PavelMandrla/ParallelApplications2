@@ -1,2 +1,5 @@
-add_library(PG INTERFACE)
+add_library(PG INTERFACE)#benchmark.h cDefs.h cudaDefs.h imageManager.h multiplatformDefs.h)
 target_include_directories(PG INTERFACE .)
+#set_target_properties(PG PROPERTIES LINKER_LANGUAGE CXX)
+target_include_directories(PG PUBLIC ${FREEIMAGE_INCLUDE_DIRS})
+target_link_libraries(PG ${FREEIMAGE_LIBRARIES})

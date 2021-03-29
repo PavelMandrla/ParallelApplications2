@@ -121,7 +121,7 @@ int main() {
 }
 */
 
-/*
+
 int main() {
     const int width = 10;
     const int height = 10;
@@ -209,4 +209,4 @@ int main() {
     cudaFree(da); da = nullptr;
     cudaFree(db); db = nullptr;
     cudaFree(dc); dc = nullptr;
-}*/
+}
