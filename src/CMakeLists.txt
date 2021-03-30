@@ -9,7 +9,10 @@ add_subdirectory(../common/ [binary_dir])
 add_library(FreeImage STATIC IMPORTED cv7.cu)
 set_property(TARGET FreeImage PROPERTY IMPORTED_LOCATION "/usr/lib/libfreeimage.a")
 
-add_executable(PA2 cv7.cu imageKernels.cuh)
+add_executable(PA2
+        arrayUtils.cuh
+        unifiedMemTest.cu
+        )
 
 
 target_link_libraries(PA2
