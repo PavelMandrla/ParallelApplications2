@@ -133,20 +133,15 @@ int main() {
     TextureInfo tiHMap = createTextureObjectFrom2DArray(hMap);
 
     dim3 block { 10, 1 ,1 };
-    dim3 grid { 64, 1, 1 };
+    dim3 grid { 128, 1, 1 };
 
     calculateSobel<<<block, grid>>>(tiHMap.texObj, nMap);
 
-    auto hNMap = static_cast<uchar3*>(::operator new (nMap.width * nMap.height * sizeof(uchar3)));
-    error = cudaMemcpy2D(hNMap, sizeof(uchar3) * nMap.width, nMap.dPtr, nMap.pitch, nMap.width, nMap.height, cudaMemcpyDeviceToHost);
+    auto gpuTime = GPUTIME(1, calculateSobel<<<block, grid>>>(tiHMap.texObj, nMap));
+    printf("\x1B[93m[GPU time] %s: %f ms\033[0m\n", "calculateSobel", gpuTime);
 
-   // saveTexImage("/home/pavel/res.tif", nMap.width, nMap.height, sizeof(uchar3) * nMap.width, hNMap);
     saveTexImage("/home/pavel/res.tif", nMap.width, nMap.height, nMap.pitch, nMap.dPtr);
 
-    /*
-    int *m = static_cast<int*>(::operator new (sizeof(int)*rows*cols));;
-    cudaMemcpy2D(m, sizeof(int) * cols, dM, dPitch, cols * sizeof(int), rows, cudaMemcpyDeviceToHost);
-    */
     if (tiHMap.texObj) checkCudaErrors(cudaDestroyTextureObject(tiHMap.texObj));
     if (tiHMap.texArrayData) checkCudaErrors(cudaFreeArray(tiHMap.texArrayData));
 
