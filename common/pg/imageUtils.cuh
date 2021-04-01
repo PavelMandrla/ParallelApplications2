@@ -81,12 +81,9 @@ __host__ void prepareData(const char* imageFileName, ImageInfo<T>& img)
 	img.width = aWidth;
 	img.height = aHeight;
 
-	if constexpr (NEED_PITCH_MEMORY == true)
-	{
+	if constexpr (NEED_PITCH_MEMORY == true) {
 		checkCudaErrors(cudaMallocPitch((void**)&img.dPtr, &img.pitch, img.width * sizeof(T), img.height));
-	}
-	else
-	{
+	} else {
 		img.pitch = img.width * sizeof(T); 
 		checkCudaErrors(cudaMalloc((void**)&img.dPtr, img.pitch * img.height));
 	}

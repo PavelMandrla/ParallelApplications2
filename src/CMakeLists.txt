@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(ParallelApplications2 LANGUAGES C CXX CUDA)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 
 add_subdirectory(../common/ [binary_dir])
@@ -9,10 +9,7 @@ add_subdirectory(../common/ [binary_dir])
 add_library(FreeImage STATIC IMPORTED cv7.cu)
 set_property(TARGET FreeImage PROPERTY IMPORTED_LOCATION "/usr/lib/libfreeimage.a")
 
-add_executable(PA2
-        arrayUtils.cuh
-        unifiedMemTest.cu
-        )
+add_executable(PA2 cv8.cu)
 
 
 target_link_libraries(PA2
