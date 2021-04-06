@@ -1,7 +1,5 @@
-//#include <glew.h>
-#include <GL/glew.h>
-#include <GL/freeglut.h>
-//#include <freeglut.h>
+#include <GL/glew.h> //#include <glew.h>
+#include <GL/freeglut.h> //#include <freeglut.h>
 
 #include <cudaDefs.h>
 
@@ -67,12 +65,26 @@ __global__ void applyFilter(const cudaTextureObject_t srcTex, const unsigned cha
 	if (tx >= pboWidth || ty > pboHeight) return;
 
 	unsigned int pboIdx = ((ty * pboWidth) + tx) * 4;
-	const uchar4 texel = tex2D<uchar4>(srcTex, tx, ty);
+    const uchar4 texel = tex2D<uchar4>(srcTex, tx, ty);
 
-	pbo[pboIdx++] = someValue;
-	pbo[pboIdx++] = texel.y;
-	pbo[pboIdx++] = texel.z;
-	pbo[pboIdx]   = texel.w;
+	bool isNextToWater = false;
+    isNextToWater |= tex2D<uchar4>(srcTex, tx-1, ty).x == 119;
+    isNextToWater |= tex2D<uchar4>(srcTex, tx+1, ty).x == 119;
+    isNextToWater |= tex2D<uchar4>(srcTex, tx, ty-1).x == 119;
+    isNextToWater |= tex2D<uchar4>(srcTex, tx, ty+1).x == 119;
+
+    if (texel.x == 255 && isNextToWater) {
+        pbo[pboIdx++] = 119;
+        pbo[pboIdx++] = 198;
+        pbo[pboIdx++] = 231;
+        pbo[pboIdx]   = 255;
+    } else {
+        pbo[pboIdx++] = texel.x;
+        pbo[pboIdx++] = texel.y;
+        pbo[pboIdx++] = texel.z;
+        pbo[pboIdx]   = texel.w;
+    }
+
 }
 
 void cudaWorker() {
@@ -85,7 +97,7 @@ void cudaWorker() {
     size_t pboSize;
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void**)&pboData, &pboSize, cd.pboResource));
 
-	// TODO: Run kernel
+	// Run kernel
 	dim3 block(TPB_1D, TPB_1D, 1);
 	dim3 grid((gl.imageWidth + TPB_1D - 1) / TPB_1D, (gl.imageHeight + TPB_1D - 1) / TPB_1D, 1);
 	if (someValue > 255) someValue = 0;
@@ -236,7 +248,6 @@ void initGL(int argc, char** argv)
 	glutCreateWindow(0);
 
 	char m_windowsTitle[512];
-	//sprintf_s
     snprintf(m_windowsTitle, 512, "SimpleView | context %s | renderer %s | vendor %s ",
 		(const char*)glGetString(GL_VERSION),
 		(const char*)glGetString(GL_RENDERER),
@@ -277,7 +288,7 @@ int main(int argc, char* argv[]) {
 	FreeImage_Initialise();
 
 	initGL(argc, argv);
-	prepareGlObjects("/home/pavel/prg/cpp/ParallelApplications2/images/lena.png");
+	prepareGlObjects("/home/pavel/prg/cpp/ParallelApplications2/images/world.png");
 
 	initCUDAObjects();
 
