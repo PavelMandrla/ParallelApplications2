@@ -288,7 +288,7 @@ int main(int argc, char* argv[]) {
 	FreeImage_Initialise();
 
 	initGL(argc, argv);
-	prepareGlObjects("/home/pavel/prg/cpp/ParallelApplications2/images/world.png");
+	prepareGlObjects("/home/pavel/prg/cpp/ParallelApplications2/images/world_tmp.png");
 
 	initCUDAObjects();
 

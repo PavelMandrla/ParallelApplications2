@@ -22,8 +22,7 @@ cudaDeviceProp deviceProp = cudaDeviceProp();
 
 using DT = uint32_t;
 
-struct alignas(8) ResultType
-{
+struct alignas(8) ResultType {
 	float fitness;
 	uint32_t idx;
 	

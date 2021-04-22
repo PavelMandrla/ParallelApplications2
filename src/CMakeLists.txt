@@ -4,6 +4,9 @@ project(ParallelApplications2 LANGUAGES C CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 
+
+
+
 add_subdirectory(../common/ [binary_dir])
 
 add_library(FreeImage STATIC IMPORTED cv7.cu)
@@ -18,7 +21,11 @@ find_package(GLEW REQUIRED)
 
 include_directories( ${OPENGL_INCLUDE_DIRS} ${GLUT_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS})
 
-add_executable(PA2 cv9.cu)
+#add_executable(PA2 competition.cu cv10.cu cv10_man0117.cu)
+add_executable(PA2
+        #cv9.cu
+        project.cu
+        )
 
 set_target_properties(PA2 PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
@@ -35,7 +42,8 @@ target_link_libraries(PA2
         ${GLUT_LIBRARIES}
         ${GLEW_LIBRARIES}
         )
-
+set_property(TARGET PA2 PROPERTY CUDA_ARCHITECTURES 35 50 72)
+#set_property(TARGET PA2 PROPERTY CUDA_ARCHITECTURES OFF)
 
 
 

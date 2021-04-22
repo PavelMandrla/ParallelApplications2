@@ -1,0 +1,10 @@
+{
+  "leaders": 10,
+  "followers": 1000000,
+  "heightmap": "path_to_heightmap",
+  "heightmapGridX": 16000,
+  "heightmapGridY": 9000,
+  "leaderRadius": 50,
+  "speedFactor": 0.123,
+  "outputFile": "path_to_output_file"
+}
