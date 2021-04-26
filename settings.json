@@ -1,7 +1,7 @@
 {
   "leaders": 10,
-  "followers": 1000000,
-  "heightmap": "/home/pavel/prg/cpp/ParallelApplications2/images/terrain3Kx3K.tif",
+  "followers": 20,
+  "heightmap": "/home/pavel/prg/cpp/ParallelApplications2/terrain10x10.tif",
   "heightmapGridX": 16000,
   "heightmapGridY": 9000,
   "leaderRadius": 50,

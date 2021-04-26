@@ -7,6 +7,7 @@
 #include <string>
 #include <algorithm>
 #include <random>
+#include <chrono>
 
 #include <cudaDefs.h>
 #include <FreeImage.h>
@@ -14,10 +15,14 @@
 
 using namespace std;
 
+//TODO -> update TPB_1D and TPB_2D values
+constexpr unsigned int TPB_1D = 8;									// ThreadsPerBlock in one dimension
+constexpr unsigned int TPB_2D =  TPB_1D * TPB_1D;					// ThreadsPerBlock = TPB_1D*TPB_1D (2D block)
+
 cudaError_t error = cudaSuccess;
 cudaDeviceProp deviceProp = cudaDeviceProp();
 
-std::mt19937 generator(123);
+std::mt19937 generator(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 
 struct GLData {
     unsigned int imageWidth;
@@ -110,11 +115,14 @@ struct HeightMap {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
 
+
+        glBindTexture(GL_TEXTURE_2D, 0);
         FreeImage_Unload(tmp);
 
         glGenBuffers(1, &glData.pboID);
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, glData.pboID);														// Make this the current UNPACK buffer (OpenGL is state-based)
         glBufferData(GL_PIXEL_UNPACK_BUFFER, glData.imageWidth * glData.imageHeight * 4, NULL, GL_DYNAMIC_COPY);	// Allocate data for the buffer. 4-channel 8-bit image
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     }
 
     void initCUDAObjects() {
@@ -158,15 +166,14 @@ struct HeightMap {
         ));
     }
 
-
     void init(const string& path) {
         prepareGlObjects(path.c_str());
         initCUDAObjects();
     }
 
     ~HeightMap() {
-        //checkCudaErrors(cudaGraphicsUnregisterResource(this->cudaData.texResource));
-        //checkCudaErrors(cudaGraphicsUnregisterResource(this->cudaData.pboResource));
+        checkCudaErrors(cudaGraphicsUnregisterResource(this->cudaData.texResource));
+        checkCudaErrors(cudaGraphicsUnregisterResource(this->cudaData.pboResource));
 
         if (this->glData.textureID > 0)
             glDeleteTextures(1, &this->glData.textureID);
@@ -175,12 +182,15 @@ struct HeightMap {
     }
 };
 HeightMap hMap;
+unsigned int overlayTexId;
 
 struct Particle {
     float x, y;         // POSITION
     float v_x { 0.0f }; // VELOCITY IN DIRECTION X
     float v_y { 0.0f }; // VELOCITY IN DIRECTION Y
 };
+Particle* dLeaders;
+Particle* dFollowers;
 
 std::vector<Particle> generateParticles(int n) {
     std::vector<Particle> result;
@@ -188,14 +198,103 @@ std::vector<Particle> generateParticles(int n) {
     std::uniform_real_distribution<float> dis(0.0, 1.0);
     for (int i = 0; i < n; i++) {
         result.push_back(Particle{
-            dis(generator) * settings.heightmapGridX,
-            dis(generator) * settings.heightmapGridY,
+            dis(generator) * hMap.glData.imageWidth,
+            dis(generator) * hMap.glData.imageHeight,
             0.0f, 0.0f
         });
     }
 
     return result;
 }
+
+#pragma region --- CUDA ---
+
+__global__ void clearPBO(unsigned char* pbo, const unsigned int pboWidth, const unsigned int pboHeight) {
+    unsigned int tx = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int ty = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (tx >= pboWidth || ty > pboHeight) return;
+    unsigned int pboIdx = ((ty * pboWidth) + tx) * 4;
+
+    pbo[pboIdx++] = 0;
+    pbo[pboIdx++] = 0;
+    pbo[pboIdx++] = 0;
+    pbo[pboIdx]   = 0;
+}
+
+__global__ void renderParticles(uchar3 color, Particle* particles, int particleCount, unsigned char* pbo, const unsigned int pboWidth, const unsigned int pboHeight) {
+    unsigned int tx = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int jump = blockDim.x * gridDim.x;
+
+    while (tx < particleCount) {
+        Particle p = particles[tx];
+        unsigned int pboIdx = ((floor(p.y) * pboWidth) + floor(p.x)) * 4;
+        pbo[pboIdx++] = color.x;
+        pbo[pboIdx++] = color.y;
+        pbo[pboIdx++] = color.z;
+        pbo[pboIdx]   = 255;
+
+        tx += jump;
+    }
+}
+
+__global__ void applyFilter(const cudaTextureObject_t srcTex, const unsigned int pboWidth, const unsigned int pboHeight, unsigned char* pbo) {
+    unsigned int tx = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int ty = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (tx >= pboWidth || ty > pboHeight) return;
+    unsigned int pboIdx = ((ty * pboWidth) + tx) * 4;
+
+    pbo[pboIdx++] = 64;
+    pbo[pboIdx++] = 255;
+    pbo[pboIdx++] = 0;
+    pbo[pboIdx]   = 128;
+}
+
+void cudaWorker() {
+    // Map GL resources
+    checkCudaErrors(cudaGraphicsMapResources(1, &hMap.cudaData.texResource, 0));
+    checkCudaErrors(cudaGraphicsSubResourceGetMappedArray(&hMap.cudaData.texArrayData, hMap.cudaData.texResource, 0, 0));
+
+    // TODO -> move pbo resource to be part of overlay texture
+    checkCudaErrors(cudaGraphicsMapResources(1, &hMap.cudaData.pboResource, 0));
+    unsigned char* pboData;
+    size_t pboSize;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void**)&pboData, &pboSize, hMap.cudaData.pboResource));
+
+    {   // CLEAR PBO
+        dim3 block(TPB_1D, TPB_1D, 1);
+        dim3 grid((hMap.glData.imageWidth + TPB_1D - 1) / TPB_1D, (hMap.glData.imageHeight + TPB_1D - 1) / TPB_1D, 1);
+        clearPBO<<<grid, block>>>(pboData, hMap.glData.imageWidth, hMap.glData.imageHeight);
+    };
+
+    {   // PUT PARTCLES INTO PBO
+        constexpr uchar3 leaderColor = {255, 0, 0};
+        constexpr uchar3 followerColor = {0, 0, 255};
+
+        //TODO -> adjust block and grid sizes
+        dim3 block(128, 1, 1);
+        dim3 grid(1, 1, 1);
+        renderParticles<<<grid, block>>>(leaderColor, dLeaders, settings.leaders, pboData, hMap.glData.imageWidth, hMap.glData.imageHeight);
+        renderParticles<<<grid, block>>>(followerColor, dFollowers, settings.followers, pboData, hMap.glData.imageWidth, hMap.glData.imageHeight);
+    };
+
+    // TODO -> Run kernel
+
+
+    // Unmap GL Resources
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &hMap.cudaData.texResource, 0));
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &hMap.cudaData.pboResource, 0));
+
+    // This updates GL texture from PBO
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, hMap.glData.pboID);
+    glBindTexture(GL_TEXTURE_2D, overlayTexId);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, hMap.glData.imageWidth, hMap.glData.imageHeight, GL_RGBA, GL_UNSIGNED_BYTE, NULL);   //Source parameter is NULL, Data is coming from a PBO, not host memory
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    printf(".");
+}
+
+#pragma endregion
 
 #pragma region --- OPEN_GL ---
 
@@ -204,6 +303,7 @@ void my_display() {
 
     glEnable(GL_TEXTURE_2D);
 
+    //glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, hMap.glData.textureID);
     glBegin(GL_QUADS);
     glTexCoord2d(0, 0);		glVertex2d(0, 0);
@@ -211,6 +311,16 @@ void my_display() {
     glTexCoord2d(1, 1);		glVertex2d( hMap.glData.viewportWidth,  hMap.glData.viewportHeight);
     glTexCoord2d(0, 1);		glVertex2d(0,  hMap.glData.viewportHeight);
     glEnd();
+
+    //glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, overlayTexId);
+    glBegin(GL_QUADS);
+    glTexCoord2d(0, 0);		glVertex2d(0, 0);
+    glTexCoord2d(1, 0);		glVertex2d( hMap.glData.viewportWidth, 0);
+    glTexCoord2d(1, 1);		glVertex2d( hMap.glData.viewportWidth,  hMap.glData.viewportHeight);
+    glTexCoord2d(0, 1);		glVertex2d(0,  hMap.glData.viewportHeight);
+    glEnd();
+
 
     glDisable(GL_TEXTURE_2D);
 
@@ -236,7 +346,7 @@ void my_resize(GLsizei w, GLsizei h) {
 }
 
 void my_idle() {
-    //cudaWorker();
+    cudaWorker();
     glutPostRedisplay();
 }
 
@@ -261,21 +371,40 @@ void initGL(int argc, char** argv) {
     glutIdleFunc(my_idle);
     glutSetCursor(GLUT_CURSOR_CROSSHAIR);
 
+
     // initialize necessary OpenGL extensions
     glewInit();
 
     glClearColor(0.0, 0.0, 0.0, 1.0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glShadeModel(GL_SMOOTH);
     glViewport(0, 0, hMap.glData.viewportWidth, hMap.glData.viewportHeight);
 
     glFlush();
+
+
 }
 
 #pragma endregion
 
+void initOverlayTex() {
+    //OpenGL Texture
+    glEnable(GL_TEXTURE_2D);
+    glGenTextures(1, &overlayTexId);
+    glBindTexture(GL_TEXTURE_2D, overlayTexId);
+
+    std::vector<GLubyte> emptyData(hMap.glData.imageWidth * hMap.glData.imageHeight * 4, 128);
+    //WARNING: Just some of inner format are supported by CUDA!!!
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, hMap.glData.imageWidth, hMap.glData.imageHeight, 0, GL_BGRA, GL_UNSIGNED_BYTE, &emptyData[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 int main(int argc, char* argv[]) {
-    Particle* dLeaders;
-    Particle* dFollowers;
 
     #pragma region initialize
     initializeCUDA(deviceProp);
@@ -283,19 +412,26 @@ int main(int argc, char* argv[]) {
         printf("Please specify path to the configuration path");
         return 1;
     }
-    Settings settings(argv[1]);
+    settings = Settings(argv[1]);
     initGL(1, argv);
 
     // INITIALIZE HEIHGHT MAP
     hMap.init(settings.heightMap);
+    auto a = glGetError();
+    initOverlayTex();
+    a = glGetError();
+
+
 
     // CREATE LEADERS AND COPY TO DEVICE
+    auto leaders = generateParticles(settings.leaders);
     cudaMalloc((void**)&dLeaders, settings.leaders * sizeof(Particle));
-    cudaMemcpy(dLeaders, generateParticles(settings.leaders).data(), settings.leaders * sizeof(Particle), cudaMemcpyHostToDevice);
+    cudaMemcpy(dLeaders, leaders.data(), settings.leaders * sizeof(Particle), cudaMemcpyHostToDevice);
 
     // CREATE FOLLOWERS AND COPY TO DEVICE
-    cudaMalloc((void**)&dLeaders, settings.followers * sizeof(Particle));
-    cudaMemcpy(dLeaders, generateParticles(settings.followers).data(), settings.followers * sizeof(Particle), cudaMemcpyHostToDevice);
+    auto followers = generateParticles(settings.followers);
+    cudaMalloc((void**)&dFollowers, settings.followers * sizeof(Particle));
+    cudaMemcpy(dFollowers, followers.data(), settings.followers * sizeof(Particle), cudaMemcpyHostToDevice);
 
     #pragma endregion
 
