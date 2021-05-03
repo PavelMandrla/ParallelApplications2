@@ -238,19 +238,6 @@ __global__ void renderParticles(uchar3 color, Particle* particles, int particleC
     }
 }
 
-__global__ void applyFilter(const cudaTextureObject_t srcTex, const unsigned int pboWidth, const unsigned int pboHeight, unsigned char* pbo) {
-    unsigned int tx = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int ty = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (tx >= pboWidth || ty > pboHeight) return;
-    unsigned int pboIdx = ((ty * pboWidth) + tx) * 4;
-
-    pbo[pboIdx++] = 64;
-    pbo[pboIdx++] = 255;
-    pbo[pboIdx++] = 0;
-    pbo[pboIdx]   = 128;
-}
-
 void cudaWorker() {
     // Map GL resources
     checkCudaErrors(cudaGraphicsMapResources(1, &hMap.cudaData.texResource, 0));
@@ -291,7 +278,6 @@ void cudaWorker() {
     glBindTexture(GL_TEXTURE_2D, overlayTexId);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, hMap.glData.imageWidth, hMap.glData.imageHeight, GL_RGBA, GL_UNSIGNED_BYTE, NULL);   //Source parameter is NULL, Data is coming from a PBO, not host memory
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-    printf(".");
 }
 
 #pragma endregion
